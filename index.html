@@ -68,8 +68,12 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--ink);font-siz
 #app{padding-top:56px;min-height:100vh;display:flex;flex-direction:column}
 
 /* ── HERO / INPUT PANEL ── */
+#hero-section{
+  width:100%;display:flex;flex-direction:column;align-items:center;
+  padding:0 24px 64px;
+}
 #hero{
-  max-width:860px;margin:0 auto;padding:64px 32px 48px;
+  width:100%;max-width:760px;padding:64px 0 48px;
   display:flex;flex-direction:column;align-items:center;text-align:center;
 }
 .hero-eyebrow{
@@ -85,7 +89,7 @@ body{font-family:var(--font-body);background:var(--bg);color:var(--ink);font-siz
 
 /* ── FORM ── */
 #input-form{
-  width:100%;max-width:720px;background:var(--surface);
+  width:100%;max-width:760px;background:var(--surface);
   border:1px solid var(--border);border-radius:var(--radius-lg);
   padding:32px;box-shadow:var(--shadow-lg);text-align:left;
 }
@@ -111,7 +115,6 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
   font-size:12px;font-weight:500;color:var(--ink-light);background:var(--bg);
   transition:all .15s;user-select:none;
 }
-.focus-chip input{display:none}
 .focus-chip.active{border-color:var(--gold);color:var(--gold-dark);background:rgba(201,168,76,0.08);font-weight:600}
 
 .form-divider{grid-column:1/-1;border:none;border-top:1px solid var(--border);margin:4px 0}
@@ -578,13 +581,13 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
         <div class="form-group">
           <label>Report Focus</label>
           <div class="focus-row" id="focus-chips">
-            <label class="focus-chip active"><input type="checkbox" value="Pricing" checked> Pricing</label>
-            <label class="focus-chip active"><input type="checkbox" value="Product" checked> Product</label>
-            <label class="focus-chip active"><input type="checkbox" value="Marketing" checked> Marketing</label>
-            <label class="focus-chip"><input type="checkbox" value="M&A"> M&A</label>
-            <label class="focus-chip"><input type="checkbox" value="Tech Stack"> Tech Stack</label>
-            <label class="focus-chip"><input type="checkbox" value="Regulatory"> Regulatory</label>
-            <label class="focus-chip"><input type="checkbox" value="Talent"> Talent</label>
+            <div class="focus-chip active" data-value="Pricing" onclick="toggleFocus(this)">Pricing</div>
+            <div class="focus-chip active" data-value="Product" onclick="toggleFocus(this)">Product</div>
+            <div class="focus-chip active" data-value="Marketing" onclick="toggleFocus(this)">Marketing</div>
+            <div class="focus-chip" data-value="M&A" onclick="toggleFocus(this)">M&A</div>
+            <div class="focus-chip" data-value="Tech Stack" onclick="toggleFocus(this)">Tech Stack</div>
+            <div class="focus-chip" data-value="Regulatory" onclick="toggleFocus(this)">Regulatory</div>
+            <div class="focus-chip" data-value="Talent" onclick="toggleFocus(this)">Talent</div>
           </div>
         </div>
 
@@ -697,13 +700,10 @@ function toggleAgent(id) {
   }
 }
 
-function setupFocusChips() {
-  document.querySelectorAll('.focus-chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      chip.classList.toggle('active');
-    });
-  });
+function toggleFocus(el) {
+  el.classList.toggle('active');
 }
+function setupFocusChips() { /* no-op: handled by onclick */ }
 
 // ═══════════════════════════════════════════════
 // SETTINGS
@@ -757,20 +757,22 @@ function clearCheckpoints() {
 // ═══════════════════════════════════════════════
 // API HELPERS
 // ═══════════════════════════════════════════════
-async function callGPT(systemPrompt, userPrompt, retries=2) {
+async function callGPT(systemPrompt, userPrompt, retries=2, maxTokens=2000, jsonMode=true) {
   const key = localStorage.getItem('ci_openai_key');
   if(!key) throw new Error('OpenAI API key not set');
   for(let attempt=0; attempt<=retries; attempt++) {
     try {
+      const body = {
+        model:'gpt-4o-mini',
+        messages:[{role:'system',content:systemPrompt},{role:'user',content:userPrompt}],
+        temperature:0.4,
+        max_tokens: maxTokens
+      };
+      if(jsonMode) body.response_format = {type:'json_object'};
       const r = await fetch('https://api.openai.com/v1/chat/completions', {
         method:'POST',
         headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`},
-        body: JSON.stringify({
-          model:'gpt-4o-mini',
-          messages:[{role:'system',content:systemPrompt},{role:'user',content:userPrompt}],
-          temperature:0.4,
-          max_tokens:4000
-        })
+        body: JSON.stringify(body)
       });
       if(!r.ok) {
         const e = await r.json().catch(()=>({error:{message:r.statusText}}));
@@ -780,9 +782,20 @@ async function callGPT(systemPrompt, userPrompt, retries=2) {
       return data.choices[0].message.content.trim();
     } catch(e) {
       if(attempt===retries) throw e;
-      await sleep(1000*(attempt+1));
+      await sleep(1200*(attempt+1));
     }
   }
+}
+
+function safeJSON(raw, fallback={}) {
+  if(!raw) return fallback;
+  try { return JSON.parse(raw); } catch{}
+  try {
+    const clean = raw.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/```\s*$/,'').trim();
+    return JSON.parse(clean);
+  } catch{}
+  try { const m = raw.match(/\{[\s\S]*\}/); if(m) return JSON.parse(m[0]); } catch{}
+  return fallback;
 }
 
 async function callTavily(query, maxResults=5) {
@@ -843,7 +856,7 @@ async function runPipeline() {
     geography: document.getElementById('f-geography').value,
     language: document.getElementById('f-language').value,
     depth: document.getElementById('f-depth').value,
-    focus: [...document.querySelectorAll('.focus-chip.active input')].map(i=>i.value),
+    focus: [...document.querySelectorAll('.focus-chip.active')].map(c=>c.dataset.value).filter(Boolean),
   };
   state.form = form;
   abortFlag = false;
@@ -864,7 +877,7 @@ async function runPipeline() {
 
       const queriesRaw = await callGPT(
         `You generate web search queries for competitive intelligence research.
-Return ONLY a JSON array of strings (8-10 queries), no markdown, no explanation.
+Return a JSON object with key "queries" containing an array of 8-10 search query strings.
 Mix English and ${form.language === 'Spanish' ? 'Spanish' : 'English'} queries.`,
         `Company: ${form.company}
 Sector: ${form.sector}
@@ -875,7 +888,18 @@ Generate diverse queries covering: market landscape, competitor analysis, pricin
       );
 
       let queries = [];
-      try { queries = JSON.parse(queriesRaw.replace(/```json|```/g,'')); } catch { queries = [`${form.company} competitors analysis`, `${form.sector} market landscape ${form.geography}`, `${form.company} pricing strategy`]; }
+      const qparsed = safeJSON(queriesRaw, {queries: null});
+      queries = Array.isArray(qparsed) ? qparsed : (qparsed.queries || qparsed.results || Object.values(qparsed)[0] || null);
+      if(!Array.isArray(queries) || queries.length === 0) {
+        queries = [
+          `${form.company} competitors analysis ${form.geography}`,
+          `${form.sector} market landscape competitive analysis`,
+          `${form.company} pricing strategy products`,
+          `${form.company} vs competitors comparison`,
+          `${form.sector} trends ${new Date().getFullYear()}`,
+          `${form.company} recent news strategy`
+        ];
+      }
 
       if(abortFlag) return;
       checkPoint(form.company, 'scout_queries', queries);
@@ -914,7 +938,7 @@ The JSON must have a "sections" array. Each section: {id, title, priority:"high"
 Focus: ${form.focus.join(', ')}
 Sources preview:\n${snippets}
 
-Design a comprehensive report outline including ALL of these sections:
+Design a comprehensive report outline. Return JSON with key "sections" as an array where each item has: "id", "title", "priority" (high/medium), "notes". Include all these section ids:
 exec_summary, three_things, bottom_line, market_landscape, competitive_overview,
 competitor_profiles, competitive_matrix, swot, porters_five_forces, pricing_analysis,
 product_features, gtm_analysis, tech_stack, mna_activity, talent_signals,
@@ -922,8 +946,8 @@ regulatory_landscape, gaps_opportunities, strategic_recommendations, action_plan
 risk_register, sources`
       );
 
-      try { outline = JSON.parse(outlineRaw.replace(/```json|```/g,'')); }
-      catch { outline = {sections: getDefaultSections()}; }
+      outline = safeJSON(outlineRaw, {sections: getDefaultSections()});
+      if(!outline.sections || !outline.sections.length) outline = {sections: getDefaultSections()};
 
       checkPoint(form.company, 'architect', outline);
       log(`Architect: ${outline.sections?.length} sections planned`, 'success');
@@ -940,71 +964,152 @@ risk_register, sources`
     // ─── ANALYST ───
     if(state.activeAgents.has('analyst')) {
       setStep('analyst', 'active');
-      log('Analyst writing sections…');
+      log('Analyst writing sections — one call per group…');
 
-      const sourcesContext = scoutData.slice(0,20).map(r=>`SOURCE [${r.url}]:\nTitle: ${r.title}\nSnippet: ${r.snippet}`).join('\n\n');
-      const sectionIds = (outline.sections||getDefaultSections()).map(s=>s.id);
-
-      const systemAnalyst = `You are a senior McKinsey consultant writing competitive intelligence report sections.
-Language: ${form.language}.
-Style: authoritative, evidence-based, executive. Short paragraphs. Bullet points for key findings.
-Use exact data/numbers from sources when available. No hedging language.
-Return ONLY valid JSON matching the exact schema requested. No markdown fences.`;
-
-      // Write all sections in one big call for efficiency
-      const allSectionsRaw = await callGPT(systemAnalyst,
-        `Company: ${form.company} | Sector: ${form.sector} | Geography: ${form.geography}
-Competitors mentioned: ${form.competitors.join(', ') || 'identify from sources'}
-Focus areas: ${form.focus.join(', ')}
+      // Build sources context (trimmed to avoid token overflow)
+      const srcCtx = scoutData.slice(0,25).map((r,i)=>`[${i+1}] ${r.title}\n${r.snippet||''}\nURL: ${r.url}`).join('\n\n');
+      const ctx = `Company: ${form.company} | Sector: ${form.sector} | Geography: ${form.geography}
+Competitors: ${form.competitors.join(', ') || 'identify from sources'}
+Focus: ${form.focus.join(', ')}
+Language: ${form.language}
 
 SOURCES:
-${sourcesContext}
+${srcCtx}`;
 
-Write ALL of these sections. Return a JSON object where each key is the section id and value is the section content.
-Schema for each section (adapt content type as needed):
+      const SYS = `You are a senior McKinsey consultant. Language: ${form.language}. 
+Return ONLY valid JSON (no markdown, no fences). Be authoritative and evidence-based.`;
 
+      // ── GROUP 1: Executive content ──
+      log('Analyst [1/5]: Executive content…', 'info');
+      const g1 = safeJSON(await callGPT(SYS, ctx + `
+
+Return JSON with exactly these keys:
 {
-  "exec_summary": {"headline":"editorial headline","body":"400-600 word executive summary"},
-  "three_things": {"items":[{"num":"01","text":"..."},{"num":"02","text":"..."},{"num":"03","text":"..."}]},
-  "bottom_line": {"text":"1 paragraph strategic conclusion"},
-  "market_landscape": {"body":"narrative analysis","key_findings":["finding 1","finding 2","finding 3","finding 4"],"market_size":"estimate if available","growth_rate":"% CAGR if available"},
-  "competitive_overview": {"body":"ecosystem map narrative","key_findings":["...","...","..."]},
-  "competitor_profiles": {"competitors":[{"name":"...","sector":"...","threat":"high|medium|low","founded":"...","hq":"...","revenue":"...","employees":"...","key_products":"...","differentiator":"...","weakness":"...","recent_moves":"..."}]},
-  "competitive_matrix": {"dimensions":["Dim1","Dim2","Dim3","Dim4","Dim5"],"companies":[{"name":"...","scores":[1-5,1-5,1-5,1-5,1-5],"has_feature":["yes","no","yes","yes","no"]}]},
-  "swot": {"strengths":["...","...","...","..."],"weaknesses":["...","...","...","..."],"opportunities":["...","...","...","..."],"threats":["...","...","...","..."]},
-  "porters_five_forces": {"forces":[{"name":"Competitive Rivalry","icon":"⚔️","score":1-5,"description":"..."},{"name":"Supplier Power","icon":"🏭","score":1-5,"description":"..."},{"name":"Buyer Power","icon":"🛒","score":1-5,"description":"..."},{"name":"Threat of Substitutes","icon":"🔄","score":1-5,"description":"..."},{"name":"Threat of New Entrants","icon":"🚪","score":1-5,"description":"..."}]},
-  "pricing_analysis": {"body":"pricing narrative","key_findings":["...","...","..."],"players":[{"name":"...","price":"...","model":"..."}]},
-  "product_features": {"body":"feature comparison narrative","key_findings":["...","...","..."],"matrix":[{"feature":"...","${form.company}":"yes|no|partial","competitors":"varies"}]},
-  "gtm_analysis": {"body":"go-to-market narrative","key_findings":["...","...","..."]},
-  "tech_stack": {"body":"tech intelligence narrative","key_findings":["...","...","..."]},
-  "mna_activity": {"body":"M&A and investment narrative","key_findings":["...","...","..."]},
-  "talent_signals": {"body":"talent and culture narrative","key_findings":["...","...","..."]},
-  "regulatory_landscape": {"body":"regulatory analysis","key_findings":["...","...","..."]},
-  "gaps_opportunities": {"gaps":[{"icon":"💡","title":"...","description":"...","tag":"..."},{"icon":"🎯","title":"...","description":"...","tag":"..."},{"icon":"🚀","title":"...","description":"...","tag":"..."},{"icon":"🔮","title":"...","description":"...","tag":"..."}]},
-  "strategic_recommendations": {"recs":[{"priority":"high","title":"...","description":"...","impact":"...","effort":"high|medium|low","horizon":"0-6 months"},{"priority":"high","title":"...","description":"...","impact":"...","effort":"medium","horizon":"0-6 months"},{"priority":"medium","title":"...","description":"...","impact":"...","effort":"medium","horizon":"6-12 months"},{"priority":"medium","title":"...","description":"...","impact":"...","effort":"low","horizon":"6-12 months"},{"priority":"low","title":"...","description":"...","impact":"...","effort":"low","horizon":"12-18 months"}]},
-  "action_plan_90d": {"phases":[{"label":"Week 1–2: Quick Wins","actions":["...","...","..."]},{"label":"Month 1: Foundations","actions":["...","...","..."]},{"label":"Month 2–3: Strategic Initiatives","actions":["...","...","..."]}]},
-  "risk_register": {"risks":[{"risk":"...","category":"...","probability":"High|Medium|Low","impact":"High|Medium|Low","mitigation":"..."},{"risk":"...","category":"...","probability":"Medium","impact":"High","mitigation":"..."},{"risk":"...","category":"...","probability":"Low","impact":"Medium","mitigation":"..."},{"risk":"...","category":"...","probability":"High","impact":"Medium","mitigation":"..."},{"risk":"...","category":"...","probability":"Medium","impact":"Medium","mitigation":"..."}]}
-}`
-      );
+  "exec_summary": {"headline": "short editorial headline", "body": "executive summary 300-500 words"},
+  "three_things": {"items": [{"num":"01","text":"key insight 1"},{"num":"02","text":"key insight 2"},{"num":"03","text":"key insight 3"}]},
+  "bottom_line": {"text": "1 paragraph strategic bottom line conclusion"}
+}`, 2, 2000), {});
+      Object.assign(sections, g1);
+      log(`  → exec_summary: ${g1.exec_summary?.headline ? '✓' : 'empty'}`, g1.exec_summary?.headline ? 'success' : 'error');
+      setProgress(28);
+      await sleep(600);
 
-      try {
-        const clean = allSectionsRaw.replace(/```json|```/g,'').trim();
-        sections = JSON.parse(clean);
-      } catch(e) {
-        log('Analyst: JSON parse error, attempting recovery…', 'error');
-        // try to extract partial
-        sections = {};
-      }
+      // ── GROUP 2: Market & Competition ──
+      log('Analyst [2/5]: Market & competition…', 'info');
+      const g2 = safeJSON(await callGPT(SYS, ctx + `
+
+Return JSON with exactly these keys:
+{
+  "market_landscape": {"body":"market analysis 200-300 words","market_size":"estimate","growth_rate":"CAGR","key_findings":["finding1","finding2","finding3","finding4"]},
+  "competitive_overview": {"body":"competitive ecosystem 150-200 words","key_findings":["finding1","finding2","finding3"]},
+  "competitor_profiles": {"competitors":[{"name":"competitor name","sector":"sector","threat":"high|medium|low","founded":"year","hq":"city, country","revenue":"estimate","employees":"estimate","key_products":"brief description","differentiator":"main differentiator","weakness":"known weakness","recent_moves":"recent strategic moves"}]}
+}
+
+Include 3-5 real competitors. Use data from sources.`, 2, 2500), {});
+      Object.assign(sections, g2);
+      log(`  → competitors: ${g2.competitor_profiles?.competitors?.length || 0} profiles`, g2.competitor_profiles?.competitors?.length ? 'success' : 'error');
+      setProgress(35);
+      await sleep(600);
+
+      // ── GROUP 3: Strategic frameworks ──
+      log('Analyst [3/5]: SWOT & Porter…', 'info');
+      const g3 = safeJSON(await callGPT(SYS, ctx + `
+
+Return JSON with exactly these keys:
+{
+  "swot": {
+    "strengths": ["strength 1","strength 2","strength 3","strength 4"],
+    "weaknesses": ["weakness 1","weakness 2","weakness 3","weakness 4"],
+    "opportunities": ["opportunity 1","opportunity 2","opportunity 3","opportunity 4"],
+    "threats": ["threat 1","threat 2","threat 3","threat 4"]
+  },
+  "porters_five_forces": {"forces":[
+    {"name":"Competitive Rivalry","icon":"⚔️","score":3,"description":"analysis 40-60 words"},
+    {"name":"Supplier Power","icon":"🏭","score":2,"description":"analysis 40-60 words"},
+    {"name":"Buyer Power","icon":"🛒","score":3,"description":"analysis 40-60 words"},
+    {"name":"Threat of Substitutes","icon":"🔄","score":2,"description":"analysis 40-60 words"},
+    {"name":"Threat of New Entrants","icon":"🚪","score":3,"description":"analysis 40-60 words"}
+  ]},
+  "competitive_matrix": {
+    "dimensions": ["Quality","Innovation","Price Comp.","Market Reach","Digital"],
+    "companies": [{"name":"company name","scores":[3,3,3,3,3]}]
+  }
+}
+
+Use real scores 1-5 based on evidence. Include ${form.company} and main competitors in matrix.`, 2, 2500), {});
+      Object.assign(sections, g3);
+      log(`  → SWOT: ${g3.swot?.strengths?.length ? '✓' : 'empty'} | Porter: ${g3.porters_five_forces?.forces?.length ? '✓' : 'empty'}`, 'success');
+      setProgress(42);
+      await sleep(600);
+
+      // ── GROUP 4: Market intelligence ──
+      log('Analyst [4/5]: Market intelligence…', 'info');
+      const g4 = safeJSON(await callGPT(SYS, ctx + `
+
+Return JSON with exactly these keys:
+{
+  "pricing_analysis": {"body":"pricing analysis 150-200 words","key_findings":["f1","f2","f3"],"players":[{"name":"company","price":"price point","model":"pricing model"}]},
+  "product_features": {"body":"product comparison 150-200 words","key_findings":["f1","f2","f3"]},
+  "gtm_analysis": {"body":"go-to-market analysis 150-200 words","key_findings":["f1","f2","f3"]},
+  "tech_stack": {"body":"tech stack intelligence 100-150 words","key_findings":["f1","f2"]},
+  "mna_activity": {"body":"M&A and investment activity 100-150 words","key_findings":["f1","f2"]},
+  "talent_signals": {"body":"talent and culture signals 100-150 words","key_findings":["f1","f2"]},
+  "regulatory_landscape": {"body":"regulatory analysis 100-150 words","key_findings":["f1","f2"]}
+}`, 2, 2500), {});
+      Object.assign(sections, g4);
+      log(`  → pricing: ${g4.pricing_analysis?.body ? '✓' : 'empty'} | GTM: ${g4.gtm_analysis?.body ? '✓' : 'empty'}`, 'success');
+      setProgress(48);
+      await sleep(600);
+
+      // ── GROUP 5: Strategy & Action ──
+      log('Analyst [5/5]: Strategy & action plan…', 'info');
+      const g5 = safeJSON(await callGPT(SYS, ctx + `
+
+Return JSON with exactly these keys:
+{
+  "gaps_opportunities": {"gaps":[
+    {"icon":"💡","title":"gap title","description":"gap description 40-60 words","tag":"category"},
+    {"icon":"🎯","title":"gap title","description":"gap description 40-60 words","tag":"category"},
+    {"icon":"🚀","title":"gap title","description":"gap description 40-60 words","tag":"category"},
+    {"icon":"🔮","title":"gap title","description":"gap description 40-60 words","tag":"category"}
+  ]},
+  "strategic_recommendations": {"recs":[
+    {"priority":"high","title":"rec title","description":"description 50-80 words","impact":"expected impact","effort":"high|medium|low","horizon":"0-6 months"},
+    {"priority":"high","title":"rec title","description":"description 50-80 words","impact":"expected impact","effort":"medium","horizon":"0-6 months"},
+    {"priority":"medium","title":"rec title","description":"description 50-80 words","impact":"expected impact","effort":"medium","horizon":"6-12 months"},
+    {"priority":"medium","title":"rec title","description":"description 50-80 words","impact":"expected impact","effort":"low","horizon":"6-12 months"},
+    {"priority":"low","title":"rec title","description":"description 50-80 words","impact":"expected impact","effort":"low","horizon":"12-18 months"}
+  ]},
+  "action_plan_90d": {"phases":[
+    {"label":"Week 1–2: Quick Wins","actions":["action 1","action 2","action 3"]},
+    {"label":"Month 1: Foundations","actions":["action 1","action 2","action 3"]},
+    {"label":"Month 2–3: Strategic Initiatives","actions":["action 1","action 2","action 3"]}
+  ]},
+  "risk_register": {"risks":[
+    {"risk":"risk description","category":"category","probability":"High|Medium|Low","impact":"High|Medium|Low","mitigation":"mitigation strategy"},
+    {"risk":"risk description","category":"category","probability":"Medium","impact":"High","mitigation":"mitigation strategy"},
+    {"risk":"risk description","category":"category","probability":"Low","impact":"Medium","mitigation":"mitigation strategy"},
+    {"risk":"risk description","category":"category","probability":"High","impact":"Medium","mitigation":"mitigation strategy"},
+    {"risk":"risk description","category":"category","probability":"Medium","impact":"Medium","mitigation":"mitigation strategy"}
+  ]}
+}`, 2, 2500), {});
+      Object.assign(sections, g5);
+      log(`  → gaps: ${g5.gaps_opportunities?.gaps?.length || 0} | recs: ${g5.strategic_recommendations?.recs?.length || 0}`, 'success');
+      setProgress(55);
+
+      // Validate we got something
+      const populated = Object.keys(sections).filter(k => {
+        const v = sections[k];
+        return v && (v.body || v.headline || v.items || v.gaps || v.recs || v.competitors || v.forces || v.strengths);
+      });
+      log(`Analyst complete: ${populated.length}/${Object.keys(sections).length} sections populated`, populated.length > 5 ? 'success' : 'error');
 
       checkPoint(form.company, 'analyst', sections);
-      log(`Analyst: all sections written`, 'success');
       setStep('analyst', 'done');
-      setProgress(55);
     } else {
       sections = loadCheckPoint(form.company, 'analyst') || {};
       log('Analyst skipped', 'info');
     }
-
     if(abortFlag) return;
     await sleep(300);
 
@@ -1021,11 +1126,10 @@ Company: ${form.company}
 Sections present: ${Object.keys(sections).join(', ')}
 Number of sources: ${scoutData.length}
 
-Return JSON: {"section_confidence":{"exec_summary":"high|medium|low","market_landscape":"...","competitor_profiles":"...","swot":"...","porters_five_forces":"...","pricing_analysis":"...","gaps_opportunities":"...","strategic_recommendations":"...","action_plan_90d":"...","risk_register":"..."}, "overall_confidence":"high|medium|low", "data_gaps":["gap1","gap2"]}`
+Return a JSON object with keys: "section_confidence" (object mapping section ids to "high"|"medium"|"low"), "overall_confidence" ("high"|"medium"|"low"), "data_gaps" (array of strings describing missing information).`
       );
 
-      try { validation = JSON.parse(validRaw.replace(/```json|```/g,'')); }
-      catch { validation = {section_confidence:{}, overall_confidence:'medium', data_gaps:[]}; }
+      validation = safeJSON(validRaw, {section_confidence:{}, overall_confidence:'medium', data_gaps:[]});
 
       checkPoint(form.company, 'validator', validation);
       log(`Validator: overall confidence — ${validation.overall_confidence}`, 'success');
